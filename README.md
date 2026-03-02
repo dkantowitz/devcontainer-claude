@@ -1,2 +1,2 @@
-# claude-devcontainer
+# devcontainer-claude
 drop-in .devcontainer directory for using claude code

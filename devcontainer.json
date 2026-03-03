@@ -1,0 +1,97 @@
+{
+  "name": "Claude Code Sandbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "TZ": "${localEnv:TZ:America/Los_Angeles}",
+      "CLAUDE_CODE_VERSION": "latest",
+      "GIT_DELTA_VERSION": "0.18.2",
+      "ZSH_IN_DOCKER_VERSION": "1.2.0"
+    }
+  },
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+    "--env-file=.devcontainer/.env"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "dbaeumer.vscode-eslint",
+        "eamodio.gitlens",
+        "esbenp.prettier-vscode",
+        "github.copilot-chat",
+        "janisdd.vscode-edit-csv",
+        "matepek.vscode-catch2-test-adapter",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.cpp-devtools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cpptools-themes",
+        "ms-vscode.cpptools"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+          },
+          "zsh": {
+            "path": "zsh"
+          }
+        }
+      }
+    }
+  },
+  "remoteUser": "node",
+  "mounts": [
+    // ── Claude Auth & Settings ────────────────────────────────────────────────
+    "source=${localEnv:USERPROFILE}/dotclaude/.credentials.json,target=/home/node/host_claude_credentials.json,type=bind,readonly=true",
+    "source=${localEnv:USERPROFILE}/dotclaude/settings.json,target=/home/node/.claude/settings.json,type=bind,readonly=false",
+    "source=${localEnv:USERPROFILE}/dotclaude/CLAUDE.md,target=/home/node/.claude/CLAUDE.md,type=bind,readonly=true",
+
+    // ── Claude project (sessions + memory), keyed by host workspace name ─────
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/dotclaude/projects/${localWorkspaceFolderBasename},target=/home/node/.claude/projects/-workspace,type=bind,consistency=delegated",
+
+    // ── Claude Commands & Plugins (no conflict) ────────────────────
+    "source=${localEnv:USERPROFILE}/dotclaude/commands,target=/home/node/.claude/commands,type=bind,readonly=false",
+    "source=${localEnv:USERPROFILE}/dotclaude/plugins,target=/home/node/.claude/plugins,type=bind,readonly=false",
+
+    // ── Claudecode command history ────────────────────────────
+    "source=${localEnv:USERPROFILE}/dotclaude/history.jsonl,target=/home/node/.claude/history.jsonl,type=bind",
+
+    // ── Isolated ~/.claude (ephemeral per container) ────────────────────────────
+    // todos/, ide/, debug/, shell-snapshots/, statsig/, stats-cache.json
+
+    // ── Firewall config (directory mount, read-only — immune to mv attack) ─
+    "source=${localEnv:USERPROFILE}/dotclaude/firewall,target=/etc/firewall,type=bind,readonly=true",
+
+    // ── SSH ────────────────────────────────────────────────────────────
+    // Using a separate set of keys with claudecode makes for easier revokation.
+    "source=${localEnv:USERPROFILE}/dotclaude/ssh,target=/home/node/.ssh,type=bind,readonly=true",
+
+    // ── Shell history ──────────────────────────────────────────────────
+    "source=${localWorkspaceFolder}/.devcontainer/commandhistory,target=/commandhistory,type=bind"
+  ],
+  "containerEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "CLAUDE_CONFIG_DIR": "/home/node/.claude",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+    "DEVCONTAINER_NAME": "${localWorkspaceFolderBasename}"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "initializeCommand": "powershell -ExecutionPolicy Bypass -File .devcontainer/devcontainer-utils.ps1 init",
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // chown is a windows thing: files mounted from NTFS always come across as root:root.
+  // $DEVCONTAINER_NAME is expanded by bash before sudo runs (sudo strips env, not args)
+  "postStartCommand": "bash -lc 'sudo /usr/local/bin/init-firewall.sh \"$DEVCONTAINER_NAME\" && time sudo chown -R node:node /workspace'",
+  "waitFor": "postStartCommand"
+}

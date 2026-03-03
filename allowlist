@@ -1,0 +1,48 @@
+# Optional domains loaded by init-firewall.sh on container start.
+# Add one entry per line. Supports plain domains, \*.wildcard notation,
+# IP addresses, and CIDR ranges. Failures here are non-fatal (WARNING only).
+# Python package repositories
+
+pypi.org
+files.pythonhosted.org
+
+# npm
+registry.npmjs.org
+
+# VSCode extension marketplace and updates
+marketplace.visualstudio.com
+vscode.blob.core.windows.net
+update.code.visualstudio.com
+
+# Helix Team Hub (git hosting)
+helixteamhub.cloud
+
+# GitHub
+# Any github.com or githubusercontent.com entry triggers a one-time fetch of
+# all GitHub CIDR ranges from api.github.com/meta (using aggregate to combine
+# them). This covers the full anycast fleet — plain DNS is not sufficient.
+# Uncomment any one line to enable; listing multiple is harmless.
+
+#github.com
+#api.github.com
+#raw.githubusercontent.com
+#objects.githubusercontent.com
+#codeload.github.com
+
+# Telegram Bot API
+api.telegram.org
+
+# Addresses for Github Copilot.
+# github.com / githubusercontent.com entries trigger CIDR fetch (not DNS).
+# api.githubcopilot.com is a separate domain — resolved via DNS.
+
+api.github.com                          # — auth/token (CIDR)
+api.githubcopilot.com                   # — completions API (DNS)
+copilot-proxy.githubusercontent.com     # — completions proxy (CIDR)
+copilot-telemetry.githubusercontent.com # — telemetry (CIDR)
+default.exp-tas.com                     # — feature flags (DNS)
+github.com                              # — OAuth flow (CIDR)
+
+# VS Code telemetry (optional — Copilot works without this)
+dc.services.visualstudio.com
+

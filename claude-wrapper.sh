@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 # claude-wrapper.sh — shadows the npm claude binary inside the devcontainer.
 # Pins project to -workspace and skips permission prompts (firewall is the
 # security boundary, not the permission system).

@@ -103,7 +103,7 @@ function Invoke-Init {
     }
     else {
         $globalMode = (Get-Content $firewallConf -Raw -ErrorAction SilentlyContinue) -replace '\s', ''
-        Write-Host "Firewall: using global firewall.conf ($globalMode) — no per-container override for '$containerName'"
+        Write-Host "Firewall: using global firewall.conf ($globalMode) - no per-container override for '$containerName'"
     }
 
     # Ensure firewall/allowlist exists (host-side user allowlist, merged with
@@ -207,7 +207,7 @@ function Invoke-ToggleFirewall {
         Write-Host "Rebuild the container to apply."
     }
     else {
-        Write-Host "Unknown value '$current' in $conf — resetting to 'enforce'"
+        Write-Host "Unknown value '$current' in $conf - resetting to 'enforce'"
         Set-Content -Path $conf -Value "enforce" -NoNewline
     }
 }

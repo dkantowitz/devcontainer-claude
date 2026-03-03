@@ -141,6 +141,7 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 
 # Install Claude, then override with wrapper that pins to /workspace
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+RUN rm -f /usr/local/share/npm-global/bin/claude
 COPY --chmod=755 claude-wrapper.sh /usr/local/share/npm-global/bin/claude
 
 # These directories get used in .devcontainer mountings to persist claude data.

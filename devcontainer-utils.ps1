@@ -63,6 +63,7 @@ function Invoke-Init {
         "$DotClaude\commands",
         "$DotClaude\firewall",
         "$DotClaude\plugins",
+        "$DotClaude\skills",
         "$DotClaude\projects",
         "$DotClaude\projects\$WorkspaceName",
         "$DotClaude\projects\$WorkspaceName\memory",

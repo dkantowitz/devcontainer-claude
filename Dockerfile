@@ -139,15 +139,16 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
-# Install Claude, then override with wrapper that pins to /workspace
+# Install Claude, then install wrapper to /usr/local/bin/claude (ahead of npm
+# global bin in PATH) so that npm install -g cannot overwrite it.
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
-RUN rm -f /usr/local/share/npm-global/bin/claude
-COPY --chmod=755 claude-wrapper.sh /usr/local/share/npm-global/bin/claude
+COPY --chmod=755 claude-wrapper.sh /usr/local/bin/claude
 
 # These directories get used in .devcontainer mountings to persist claude data.
 RUN mkdir -p /home/node/.claude/projects \
              /home/node/.claude/commands \
              /home/node/.claude/plugins \
+             /home/node/.claude/skills \
     && chown -R node:node /home/node/.claude
 
 # Copy firewall script and set up sudoers

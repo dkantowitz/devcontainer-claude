@@ -59,9 +59,10 @@
     // ── Claude project (sessions + memory), keyed by host workspace name ─────
     "source=${localEnv:HOME}${localEnv:USERPROFILE}/dotclaude/projects/${localWorkspaceFolderBasename},target=/home/node/.claude/projects/-workspace,type=bind,consistency=delegated",
 
-    // ── Claude Commands & Plugins (no conflict) ────────────────────
+    // ── Claude Commands, Plugins & Skills (no conflict) ────────────────────
     "source=${localEnv:USERPROFILE}/dotclaude/commands,target=/home/node/.claude/commands,type=bind,readonly=false",
     "source=${localEnv:USERPROFILE}/dotclaude/plugins,target=/home/node/.claude/plugins,type=bind,readonly=false",
+    "source=${localEnv:USERPROFILE}/dotclaude/skills,target=/home/node/.claude/skills,type=bind,readonly=false",
 
     // ── Claudecode command history ────────────────────────────
     "source=${localEnv:USERPROFILE}/dotclaude/history.jsonl,target=/home/node/.claude/history.jsonl,type=bind",

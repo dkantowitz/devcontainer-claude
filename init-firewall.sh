@@ -130,7 +130,7 @@ ipset create allowed-domains hash:net
 resolve_and_add() {
     local domain="$1"
     local ips ip added=0
-    ips=$(dig +noall +answer A "$domain" | awk '$4 == "A" {print $5}')
+    ips=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u)
     if [ -z "$ips" ]; then
         return 1
     fi
@@ -141,6 +141,39 @@ resolve_and_add() {
         fi
         echo "Adding $ip for $domain"
         ipset add --exist allowed-domains "$ip"
+        added=$((added + 1))
+    done < <(echo "$ips")
+    [ "$added" -gt 0 ]
+}
+
+# Resolves DOMAIN via DNS and collects port-specific iptables rules.
+# Entry format: host:port[/proto]  (proto defaults to tcp)
+# Appends "ip proto port" tuples to the port_rules array.
+# Returns 0 if at least one IP was resolved, 1 otherwise.
+resolve_and_add_port() {
+    local host="$1" port="$2" proto="$3"
+    local added=0
+
+    # Direct IP address — no DNS needed
+    if [[ "$host" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "Adding ${host} port ${port}/${proto} from allowlist"
+        port_rules+=("${host} ${proto} ${port}")
+        return 0
+    fi
+
+    local ips
+    ips=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)
+
+    if [ -z "$ips" ]; then
+        return 1
+    fi
+    while read -r ip; do
+        if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            echo "WARNING: Invalid IP for $host: $ip (skipping)"
+            continue
+        fi
+        echo "Adding ${ip} port ${port}/${proto} for ${host}"
+        port_rules+=("${ip} ${proto} ${port}")
         added=$((added + 1))
     done < <(echo "$ips")
     [ "$added" -gt 0 ]
@@ -182,6 +215,10 @@ github_triggered=false
 declare -A seen_entries
 combined_entries=()
 
+# Port-specific rules collected during allowlist processing.
+# Each element is "ip proto port" (space-separated).
+port_rules=()
+
 process_allowlist_file() {
     local file="$1"
     local label="$2"
@@ -208,6 +245,23 @@ process_allowlist_file "$HOST_ALLOWLIST" "host"
 process_allowlist_file "$PROJECT_ALLOWLIST" "project"
 
 for entry in "${combined_entries[@]}"; do
+    # ── Port-specific entry: host:port[/proto] ──────────────────────
+    # Syntax follows the Docker/IANA convention: host:port/proto
+    # where proto is tcp (default) or udp.
+    if [[ "$entry" =~ ^(.+):([0-9]+)(/([a-z]+))?$ ]]; then
+        p_host="${BASH_REMATCH[1]}"
+        p_port="${BASH_REMATCH[2]}"
+        p_proto="${BASH_REMATCH[4]:-tcp}"
+        if [[ "$p_proto" != "tcp" && "$p_proto" != "udp" ]]; then
+            echo "WARNING: Unsupported protocol '${p_proto}' in entry '${entry}' (skipping)"
+            continue
+        fi
+        echo "Resolving ${p_host}:${p_port}/${p_proto} from allowlist..."
+        resolve_and_add_port "$p_host" "$p_port" "$p_proto" \
+            || echo "WARNING: Failed to resolve $p_host (skipping)"
+        continue
+    fi
+
     # github domains encountered flags us to do the full github
     # anycast CIDR block lookup.
     if [[ "$entry" =~ (github|githubusercontent)\.com$ ]]; then
@@ -279,6 +333,12 @@ iptables -P OUTPUT DROP
 
 # Then allow only specific outbound traffic to allowed domains
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+
+# Add port-specific rules (collected from host:port[/proto] allowlist entries)
+for rule in "${port_rules[@]}"; do
+    IFS=' ' read -r r_ip r_proto r_port <<< "$rule"
+    iptables -A OUTPUT -d "$r_ip" -p "$r_proto" --dport "$r_port" -j ACCEPT
+done
 
 # Explicitly REJECT all other outbound traffic for immediate feedback
 iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited

@@ -13,24 +13,27 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin
 ## Set non-interactive mode for apt-get to avoid warnings during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-
-## ── Networking Tools ─────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      procps \
-      iptables \
-      ipset \
-      iproute2 \
-      dnsutils \
-      aggregate \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 ## ── Locale ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends locales \
     && sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen \
     && locale-gen \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-  # ── Python ───────────────────────────────────────────────────────
+
+## ── Networking Tools ─────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      aggregate \
+      dnsutils \
+      iproute2 \
+      ipset \
+      iptables \
+      netcat-openbsd \
+      procps \
+      traceroute \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+
+## ── Python ───────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 \
       python3-pip \

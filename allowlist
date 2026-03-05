@@ -1,6 +1,11 @@
 # Optional domains loaded by init-firewall.sh on container start.
-# Add one entry per line. Supports plain domains, \*.wildcard notation,
-# IP addresses, and CIDR ranges. Failures here are non-fatal (WARNING only).
+# Add one entry per line. Supports plain domains, IP addresses, CIDR ranges,
+# and port-specific entries. Failures here are non-fatal (WARNING only).
+#
+# Port-specific syntax:  host:port[/proto]   (proto = tcp | udp, default tcp)
+#   host.docker.internal:9222         → allow tcp/9222 to the Docker host
+#   10.0.0.1:5353/udp                 → allow udp/5353 to a specific IP
+#   myhost.local:8080/tcp             → allow tcp/8080 (explicit proto)
 # Python package repositories
 
 pypi.org
@@ -46,3 +51,5 @@ github.com                              # — OAuth flow (CIDR)
 # VS Code telemetry (optional — Copilot works without this)
 dc.services.visualstudio.com
 
+# host computer for chrome debugging port (used with chrome dev MCP)
+host.docker.internal:9222

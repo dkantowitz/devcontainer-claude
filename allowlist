@@ -2,12 +2,11 @@
 # Add one entry per line. Supports plain domains, IP addresses, CIDR ranges,
 # and port-specific entries. Failures here are non-fatal (WARNING only).
 #
-# Port-specific syntax:  host:port[/proto]   (proto = tcp | udp, default tcp)
-#   host.docker.internal:9222         → allow tcp/9222 to the Docker host
-#   10.0.0.1:5353/udp                 → allow udp/5353 to a specific IP
-#   myhost.local:8080/tcp             → allow tcp/8080 (explicit proto)
+# Port-specific syntax: host:port[/proto] (proto = tcp | udp, default tcp)
+# host.docker.internal:9222 → allow tcp/9222 to the Docker host
+# 10.0.0.1:5353/udp → allow udp/5353 to a specific IP
+# myhost.local:8080/tcp → allow tcp/8080 (explicit proto)
 # Python package repositories
-
 pypi.org
 files.pythonhosted.org
 
@@ -19,20 +18,16 @@ marketplace.visualstudio.com
 vscode.blob.core.windows.net
 update.code.visualstudio.com
 
-# Helix Team Hub (git hosting)
-helixteamhub.cloud
-
 # GitHub
 # Any github.com or githubusercontent.com entry triggers a one-time fetch of
 # all GitHub CIDR ranges from api.github.com/meta (using aggregate to combine
 # them). This covers the full anycast fleet — plain DNS is not sufficient.
 # Uncomment any one line to enable; listing multiple is harmless.
-
-#github.com
-#api.github.com
-#raw.githubusercontent.com
-#objects.githubusercontent.com
-#codeload.github.com
+github.com
+api.github.com
+raw.githubusercontent.com
+objects.githubusercontent.com
+codeload.github.com
 
 # Telegram Bot API
 api.telegram.org
@@ -40,13 +35,12 @@ api.telegram.org
 # Addresses for Github Copilot.
 # github.com / githubusercontent.com entries trigger CIDR fetch (not DNS).
 # api.githubcopilot.com is a separate domain — resolved via DNS.
-
-api.github.com                          # — auth/token (CIDR)
-api.githubcopilot.com                   # — completions API (DNS)
-copilot-proxy.githubusercontent.com     # — completions proxy (CIDR)
+api.github.com # — auth/token (CIDR)
+api.githubcopilot.com # — completions API (DNS)
+copilot-proxy.githubusercontent.com # — completions proxy (CIDR)
 copilot-telemetry.githubusercontent.com # — telemetry (CIDR)
-default.exp-tas.com                     # — feature flags (DNS)
-github.com                              # — OAuth flow (CIDR)
+default.exp-tas.com # — feature flags (DNS)
+github.com # — OAuth flow (CIDR)
 
 # VS Code telemetry (optional — Copilot works without this)
 dc.services.visualstudio.com
@@ -63,7 +57,15 @@ accounts.google.com
 oauth2.googleapis.com
 smtp.gmail.com
 
-# DS-001 - Model downloads
+# Docker Hub (base image pulls) 
+# Used for nested podman inside devcontainer.
+# Podman is used to let claude autonmouly build containers for the deployment artifact.
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
+r2.cloudflarestorage.com
+
+# Model downloads
 huggingface.co
 cdn-lfs.huggingface.com
 cdn-lfs-us-1.huggingface.com

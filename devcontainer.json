@@ -12,7 +12,8 @@
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
-    "--env-file=.devcontainer/.env"
+    "--env-file=.devcontainer/.env",
+    "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
   ],
   "customizations": {
     "vscode": {

@@ -28,7 +28,9 @@
         "ms-vscode.cpp-devtools",
         "ms-vscode.cpptools-extension-pack",
         "ms-vscode.cpptools-themes",
-        "ms-vscode.cpptools"
+        "ms-vscode.cpptools",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "editor.formatOnSave": true,

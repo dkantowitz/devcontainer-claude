@@ -77,6 +77,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+## ── Audio Processing ──────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+
+## ── Container Build (rootless Podman — no host Docker dependency) ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      podman fuse-overlayfs slirp4netns \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # End of apt-get installs. Remove policy-rc.d to allow services to start if needed.
 RUN rm /usr/sbin/policy-rc.d
 
@@ -96,6 +107,14 @@ RUN ARCH=$(dpkg --print-architecture) && \
     dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
     rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
+## ── just command runner (latest stable from GitHub) ──────────────
+RUN JUST_VERSION=$(curl -sL https://api.github.com/repos/casey/just/releases/latest | jq -r .tag_name) \
+    && curl -sL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+       | tar xz -C /usr/local/bin just \
+    && chmod +x /usr/local/bin/just
+
+## ── Rootless Podman user namespaces ──────────────────────────────
+RUN usermod --add-subuids 100000-165535 --add-subgids 100000-165535 node
 
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \
@@ -120,6 +139,10 @@ WORKDIR /workspace
 
 # Set up non-root user
 USER node
+
+# Rootless Podman storage config (vfs driver — no fuse needed in unprivileged container)
+RUN mkdir -p /home/node/.config/containers && \
+    printf '[storage]\ndriver = "vfs"\n' > /home/node/.config/containers/storage.conf
 
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global

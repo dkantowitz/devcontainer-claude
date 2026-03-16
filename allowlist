@@ -53,3 +53,17 @@ dc.services.visualstudio.com
 
 # host computer for chrome debugging port (used with chrome dev MCP)
 host.docker.internal:9222
+
+# DS-001 Voicemail Pipeline - API endpoints
+www.tossabledigits.com
+sandbox.tossabledigits.com
+www.ipqualityscore.com
+people.googleapis.com
+accounts.google.com
+oauth2.googleapis.com
+smtp.gmail.com
+
+# DS-001 - Model downloads
+huggingface.co
+cdn-lfs.huggingface.com
+cdn-lfs-us-1.huggingface.com

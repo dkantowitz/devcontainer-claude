@@ -12,6 +12,7 @@
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
+    "--device=/dev/net/tun",
     "--env-file=.devcontainer/.env",
     "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
   ],

@@ -6,6 +6,8 @@
 # host.docker.internal:9222 → allow tcp/9222 to the Docker host
 # 10.0.0.1:5353/udp → allow udp/5353 to a specific IP
 # myhost.local:8080/tcp → allow tcp/8080 (explicit proto)
+
+
 # Python package repositories
 pypi.org
 files.pythonhosted.org
@@ -35,12 +37,12 @@ api.telegram.org
 # Addresses for Github Copilot.
 # github.com / githubusercontent.com entries trigger CIDR fetch (not DNS).
 # api.githubcopilot.com is a separate domain — resolved via DNS.
-api.github.com # — auth/token (CIDR)
-api.githubcopilot.com # — completions API (DNS)
-copilot-proxy.githubusercontent.com # — completions proxy (CIDR)
+api.github.com                          # — auth/token (CIDR)
+api.githubcopilot.com                   # — completions API (DNS)
+copilot-proxy.githubusercontent.com     # — completions proxy (CIDR)
 copilot-telemetry.githubusercontent.com # — telemetry (CIDR)
-default.exp-tas.com # — feature flags (DNS)
-github.com # — OAuth flow (CIDR)
+default.exp-tas.com                     # — feature flags (DNS)
+github.com                              # — OAuth flow (CIDR)
 
 # VS Code telemetry (optional — Copilot works without this)
 dc.services.visualstudio.com
@@ -64,6 +66,10 @@ registry-1.docker.io
 auth.docker.io
 production.cloudflare.docker.com
 r2.cloudflarestorage.com
+
+# debian package repositories (for apt-get inside the container)
+deb.debian.org
+security.debian.org
 
 # Model downloads
 huggingface.co

@@ -83,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 
-## ── Container Build (rootless Podman — no host Docker dependency) ──
+## ── Container Building (rootless Podman — no host Docker dependency) ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
       podman fuse-overlayfs slirp4netns uidmap libcap2-bin \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -101,6 +101,11 @@ ARG CRUN_VERSION=1.26
 RUN curl -fsSL "https://github.com/containers/crun/releases/download/${CRUN_VERSION}/crun-${CRUN_VERSION}-linux-amd64" \
       -o /usr/local/bin/crun \
     && chmod +x /usr/local/bin/crun
+
+## ── hadolint (Dockerfile linter) ─────────────────────────────────
+RUN curl -fsSL "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64" \
+      -o /usr/local/bin/hadolint \
+    && chmod +x /usr/local/bin/hadolint
 
 # End of apt-get installs. Remove policy-rc.d to allow services to start if needed.
 RUN rm /usr/sbin/policy-rc.d

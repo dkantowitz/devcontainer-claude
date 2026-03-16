@@ -430,6 +430,7 @@
 				"fsmount",
 				"fsopen",
 				"fspick",
+				"keyctl",
 				"mount",
 				"mount_setattr",
 				"move_mount",

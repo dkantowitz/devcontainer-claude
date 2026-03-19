@@ -13,8 +13,8 @@ using three entry types:
 
 | Type | Format | Example | Enforcement |
 |------|--------|---------|-------------|
-| 1 — Host | `name` or `name:port` | `registry.npmjs.org` | iptables ipset (direct) |
-| 2 — Host+Port | `name:port/proto` | `host.docker.internal:9222` | iptables per-IP rule |
+| 1 — Host | `name` | `registry.npmjs.org` | iptables ipset (direct) |
+| 2 — Host+Port | `name:port` or `name:port/proto` | `host.docker.internal:9222` | iptables per-IP rule |
 | 3 — Path | `name/path` | `github.com/org/repo` | Squid ssl-bump + URL ACL |
 
 The system must create the combination of iptables and Squid proxy rules to
@@ -22,15 +22,14 @@ enforce this allowlist with the **least performance impact** — only traffic th
 *requires* inspection (path-based rules) goes through Squid. Everything else
 goes direct via iptables.
 
-**Exception: GitHub.** All GitHub/githubusercontent traffic must go through
-Squid because GitHub's anycast CIDR architecture makes IP-level service
+**Exception: CIDR based product families.** All GitHub/githubusercontent traffic must go through Squid because GitHub's anycast CIDR architecture makes IP-level service
 separation impossible (see §1 below). Squid uses `splice` (passthrough) for
 non-inspected GitHub domains and `ssl-bump` only for repo-serving domains
-that need path filtering.
+that need path filtering.  Potentially Google must be handled the same way, so this approach must be generic beyond github.  (see `init-firewall.sh` on branch proj-voicemail).
 
 All components (`init-firewall.sh`, `deploy-security.sh`, Squid config
-generation) process the **same single allowlist** and act only on the portions
-relevant to their task. There is no allowlist splitting.
+generation) process the **same single allowlist** file and act only on the portions
+relevant to their task. There is no splitting of the file into separate pieces.
 
 ---
 
@@ -212,8 +211,7 @@ only):
 # Exclude Type 3 path entries but keep CIDR notation
 grep -vE '^[^/]+/[^0-9]|^[^/]+/[0-9]+/'
 ```
-Or better: classify entries explicitly by type during allowlist parsing rather
-than using regex heuristics after the fact.
+
 
 ### F6. Squid `ssl_bump` Step Ordering
 
@@ -238,7 +236,7 @@ control, then include a link in an issue comment on a repo Claude *is* working
 with. The allowlist "human gate" doesn't help because it controls repo cloning,
 not arbitrary URL fetches.
 
-**Suggested mitigation**: Route `objects.githubusercontent.com` through Squid
+**Suggested mitigation for future implimentation**: Route `objects.githubusercontent.com` through Squid
 with ssl-bump and apply content-type / file-extension filtering. Block
 executable content types (`application/octet-stream`, `application/x-executable`,
 `application/zip`, etc.) while allowing images and text. Alternatively, add
@@ -246,6 +244,8 @@ executable content types (`application/octet-stream`, `application/x-executable`
 allowlist of URL path patterns (e.g., only allow paths matching known-safe
 patterns like avatar URLs). This is a defense-in-depth measure — the primary
 mitigation remains Claude's instruction-following behavior.
+
+
 
 ### F8. Container Lifecycle Timing
 

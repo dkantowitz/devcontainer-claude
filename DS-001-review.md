@@ -143,6 +143,46 @@ The `deploy-security.sh` script requires a sudoers entry. It must be:
 - The hash guard in `init-firewall.sh` computes against the *original*
   allowlist (before any processing)
 
+### D9. Squid Deny Logs Visible from Main Devcontainer
+
+When Squid blocks a request, the denial must be observable from the main
+devcontainer without requiring `docker exec` into the Squid sidecar. Claude
+Code runs in the main container and needs to inspect block events to
+diagnose network issues and recommend allowlist changes to the user.
+
+**Mechanism**: Squid writes denied-request logs to a shared volume mounted
+read-only into the main devcontainer:
+
+```yaml
+# docker-compose.yml
+services:
+  squid:
+    volumes:
+      - squid-logs:/var/log/squid
+  devcontainer:
+    volumes:
+      - squid-logs:/var/log/squid:ro
+
+volumes:
+  squid-logs:
+```
+
+Squid config uses a dedicated `access_log` directive for denials:
+```squid
+logformat denied %ts.%03tu %6tr %>a %Ss/%03>Hs %<st %rm %ru %un %Sh/%<a %mt
+access_log daemon:/var/log/squid/denied.log denied deny !all
+```
+
+The main devcontainer can then:
+- `tail -f /var/log/squid/denied.log` for live monitoring
+- `grep DENIED /var/log/squid/access.log` for historical lookups
+- Claude Code can read these logs to self-diagnose "connection refused" errors
+  and suggest specific allowlist additions to the user
+
+**Log rotation**: Squid's built-in `logfile_rotate` handles rotation inside
+the sidecar. The shared volume survives container restarts but is ephemeral
+(not persisted to host) — appropriate for debugging logs.
+
 ---
 
 ## Findings Requiring Implementation
@@ -293,6 +333,24 @@ domains identically. With Decision D1, this needs rework:
 - The allowlist parser must recognize GitHub entries and route them to the
   proxy path, not the direct path
 
+### F10. No Squid Observability from Main Devcontainer
+
+The Squid proxy runs as a sidecar container. When it denies a request, the
+main devcontainer sees only a generic connection error (e.g., HTTP 403 from
+Squid, or TCP RST). There is no way for Claude Code — running in the main
+container — to inspect *why* a request was blocked or which allowlist entry
+is missing.
+
+This is a significant usability gap. The current `init-firewall.sh` approach
+is debuggable because iptables logs and the allowlist are both local to the
+container. Moving enforcement to a sidecar breaks that self-diagnosability.
+
+**Impact**: Network errors become opaque. Claude Code cannot recommend
+specific allowlist changes. Users must manually `docker exec` into the Squid
+container, find logs, correlate timestamps — defeating the "just works" goal.
+
+**Resolution**: Decision D9 — shared log volume, deny-specific access log.
+
 ---
 
 ## Early High-Risk Question
@@ -343,18 +401,21 @@ Suggested ordering based on dependency and risk:
    rules
 8. **Rework `init-firewall.sh` GitHub handling** (F9) — redirect GitHub CIDRs
    to Squid instead of direct-allowing
-9. **Deploy SSH wrapper** with `ProxyCommand` for git-over-SSH through Squid
+9. **Shared deny log volume** (D9/F10) — Squid writes denied-request log to
+   shared volume, main devcontainer mounts read-only for Claude Code
+   self-diagnosis
+10. **Deploy SSH wrapper** with `ProxyCommand` for git-over-SSH through Squid
 
 ### Phase 3 — Path Filtering
-10. **Implement ssl-bump for repo-serving domains** — CA generation, cert
+11. **Implement ssl-bump for repo-serving domains** — CA generation, cert
     deployment to system trust store and git config
-11. **Implement URL path ACLs** in Squid for Type 3 allowlist entries
-12. **Add `gist.github.com`** to ssl-bump domain list (D4)
+12. **Implement URL path ACLs** in Squid for Type 3 allowlist entries
+13. **Add `gist.github.com`** to ssl-bump domain list (D4)
 
 ### Phase 4 — Hardening
-13. **`objects.githubusercontent.com` content filtering** (F7)
-14. **Latency measurement** for Copilot through splice proxy
-15. **Per-rule Squid CA** (D5 deferred improvement)
+14. **`objects.githubusercontent.com` content filtering** (F7)
+15. **Latency measurement** for Copilot through splice proxy
+16. **Per-rule Squid CA** (D5 deferred improvement)
 
 ---
 

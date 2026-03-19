@@ -1,401 +1,375 @@
-# DS-001 Review: Conceptual, Design, Security, and Implementation Issues
+# DS-001 Review: Requirements and Technical Solutions
 
 **Reviewer:** Claude Code (automated review)
-**Date:** 2026-03-18
+**Date:** 2026-03-18 (revised 2026-03-19)
 **Document:** DS-001-devcontainer-web-and-github-access-control v0.5
 
 ---
 
-## Critical Finding: GitHub Anycast CIDR Blocks Make IP-Level Service Separation Impossible
+## Design Goal
 
-### The Core Problem
+The primary goal is to specify network access rules in `.devcontainer/allowlist`
+using three entry types:
 
-DS-001's dual-layer architecture assumes that the existing iptables firewall can
-allow "direct access" to services like `copilot.github.com` and `ghcr.io` while
-*blocking* direct access to `github.com` — all at the IP level. **This does not
-work.** GitHub's anycast architecture shares CIDR blocks across services.
+| Type | Format | Example | Enforcement |
+|------|--------|---------|-------------|
+| 1 — Host | `name` or `name:port` | `registry.npmjs.org` | iptables ipset (direct) |
+| 2 — Host+Port | `name:port/proto` | `host.docker.internal:9222` | iptables per-IP rule |
+| 3 — Path | `name/path` | `github.com/org/repo` | Squid ssl-bump + URL ACL |
 
-Live data from `api.github.com/meta` confirms:
+The system must create the combination of iptables and Squid proxy rules to
+enforce this allowlist with the **least performance impact** — only traffic that
+*requires* inspection (path-based rules) goes through Squid. Everything else
+goes direct via iptables.
 
-| Service pair | Shared IPv4 CIDRs | Implication |
-|---|---|---|
-| web ∩ copilot | 6 shared (including `140.82.112.0/20`, `192.30.252.0/22`) | Allowing Copilot CIDRs allows github.com |
-| web ∩ api | 6 shared (same broad ranges) | Allowing API allows web |
-| web ∩ git | 22 shared (web is a subset of git) | Identical for practical purposes |
-| packages ⊂ web | All `packages` /32s fall within web /20 and /22 ranges | ghcr.io IPs are inside github.com CIDRs |
+**Exception: GitHub.** All GitHub/githubusercontent traffic must go through
+Squid because GitHub's anycast CIDR architecture makes IP-level service
+separation impossible (see §1 below). Squid uses `splice` (passthrough) for
+non-inspected GitHub domains and `ssl-bump` only for repo-serving domains
+that need path filtering.
 
-**The existing firewall approach in `init-firewall.sh` (lines 287-308) already
-demonstrates this problem**: it fetches CIDRs for `web + api + git + copilot`
-from the meta API and adds them all to one `ipset`. The script already knows
-these can't be separated — it uses a single `github_triggered` flag and dumps
-everything into `allowed-domains` together.
-
-### What This Means for DS-001
-
-The design says (§2, §5):
-> GitHub-family services (`ghcr.io`, `copilot.github.com`, etc.) appear as
-> `host`/`host:port` entries and are allowed direct access by the existing
-> firewall, bypassing Squid.
-
-and:
-> Repo-serving domains (`github.com`, etc.) are NOT in the direct-allow list.
-
-**This is contradictory.** You cannot allow `copilot.github.com` at the IP
-level without also allowing `github.com`, because they share `140.82.112.0/20`,
-`192.30.252.0/22`, `143.55.64.0/20`, and `185.199.108.0/22`. Any iptables rule
-permitting Copilot's IPs permits direct TCP to `github.com:443`, bypassing
-Squid entirely.
-
-### Answer to Your Question: Can We Separate GitHub Read Access from Copilot?
-
-**No, not at the IP/iptables layer.** The CIDR overlap is fundamental to
-GitHub's anycast architecture. The `/meta` API publishes these as overlapping
-ranges by design — GitHub routes by hostname (SNI/Host header) at their edge,
-not by destination IP.
+All components (`init-firewall.sh`, `deploy-security.sh`, Squid config
+generation) process the **same single allowlist** and act only on the portions
+relevant to their task. There is no allowlist splitting.
 
 ---
 
-## Consequence: All GitHub Traffic Must Go Through the Proxy
+## Resolved Architecture Decisions
 
-Since IP-level separation is impossible, there are only two viable approaches:
+These decisions are final. The review findings that prompted them are preserved
+below for context.
 
-### Option A: Route ALL GitHub-family traffic through Squid (Recommended)
+### D1. All GitHub Traffic Through Squid (Option A)
 
-Every GitHub domain — including `copilot.github.com`, `ghcr.io`,
-`api.githubcopilot.com`, `copilot-proxy.githubusercontent.com` — goes through
-Squid. The iptables firewall blocks all GitHub CIDRs for direct access.
+Every GitHub-family domain goes through Squid. The iptables firewall blocks
+direct access to all GitHub CIDRs. `NO_PROXY` must NOT include any GitHub or
+githubusercontent.com domains.
 
-Squid configuration becomes:
+Squid handles GitHub traffic in two modes:
 - **ssl-bump + path filter**: `github.com`, `api.github.com`,
-  `raw.githubusercontent.com`, `codeload.github.com` (repo-serving domains)
-- **splice (passthrough, no inspection)**: `copilot.github.com`,
-  `ghcr.io`, `copilot-proxy.githubusercontent.com`,
-  `api.githubcopilot.com`, etc.
+  `raw.githubusercontent.com`, `codeload.github.com`, `gist.github.com`
+  (repo-serving domains requiring URL inspection)
+- **splice (passthrough)**: `copilot.github.com`, `ghcr.io`,
+  `copilot-proxy.githubusercontent.com`, `api.githubcopilot.com`,
+  `copilot-telemetry.githubusercontent.com`, etc. (no inspection, opaque
+  CONNECT tunnels — clients see GitHub's real certificate)
 
-Spliced connections pass through Squid as opaque CONNECT tunnels — no CA cert
-in the chain, no SSL-bump overhead, no path inspection. They just need to be
-*allowed* by Squid ACL to transit.
+Spliced connections add one internal TCP hop. No CA cert substitution occurs.
 
-### Option B: DNS-based iptables with per-IP granularity
+### D2. UDP Automatically Disabled for ssl-bump Domains
 
-Use the `/meta` API to fetch only the service-specific `/32` IPs (not the
-shared broad ranges) for Copilot, and only allow those. This is fragile:
-- The `/32` IPs change without notice
-- The broad ranges (`/20`, `/22`) are shared and can't be split
-- Copilot may resolve to IPs within the broad shared ranges
+For any hostname that requires Squid path filtering (ssl-bump), `init-firewall.sh`
+must ensure UDP to that hostname's IPs is blocked. Since Squid cannot intercept
+QUIC (HTTP/3 over UDP/443), allowing UDP would create a proxy bypass.
 
-**Option B is not recommended.** It's too brittle.
-
-### Will Routing Through Squid Break Copilot?
-
-**No, if done correctly.** Squid can handle Copilot traffic in two modes:
-
-1. **CONNECT + splice** (preferred): Squid sees the CONNECT request with the
-   hostname, allows it, and splices — the TLS handshake goes directly between
-   the client and GitHub. No CA cert substitution. The Copilot client sees
-   GitHub's real certificate. This is functionally identical to direct access
-   but routed through the proxy.
-
-2. **CONNECT tunnel for non-443 ports**: Same principle for any port-specific
-   services.
-
-The key constraint: the Copilot VS Code extension and `api.githubcopilot.com`
-client must respect `HTTPS_PROXY`. VS Code's Copilot extension does respect
-proxy settings (it inherits from VS Code's `http.proxy` setting and
-environment variables). However, **`NO_PROXY` must NOT include Copilot
-domains** — the current design adds all `host`/`host:port` entries to
-`NO_PROXY`, which would bypass Squid for exactly the domains that need to
-go through it.
-
----
-
-## HTTP/3 (QUIC) Gap
-
-### The Problem
-
-The existing `init-firewall.sh` only creates TCP-oriented rules. The default
-`OUTPUT` policy is `DROP` (line 331), which drops all protocols including UDP.
-DNS (UDP/53) is explicitly allowed (line 115). However:
-
-1. **The iptables `allowed-domains` ipset match (line 335) does not specify
-   `-p tcp`** — it matches ALL protocols to the allowed IPs:
-   ```
-   iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
-   ```
-   This means UDP to allowed IPs (including GitHub CIDRs) is permitted.
-
-2. **QUIC (HTTP/3) runs on UDP port 443.** If GitHub enables HTTP/3 (they
-   don't currently advertise `Alt-Svc: h3` headers, but this can change),
-   clients could bypass the Squid proxy entirely via QUIC. Squid cannot
-   intercept UDP traffic.
-
-3. **Current status**: GitHub does not currently advertise HTTP/3 support
-   (`curl -sI https://github.com` shows no `alt-svc: h3` header as of
-   2026-03-18). But this is a time bomb — GitHub could enable it at any point.
-
-### Recommended Fix
-
-Add an explicit rule to `init-firewall.sh` before the ipset match:
+For GitHub specifically: the broad ipset rule must be TCP-only:
 ```bash
-# Block QUIC (HTTP/3) — UDP/443 to any destination.
-# Squid cannot intercept QUIC; allowing it would bypass proxy filtering.
-iptables -A OUTPUT -p udp --dport 443 -j REJECT --reject-with icmp-admin-prohibited
+iptables -A OUTPUT -p tcp -m set --match-set github-proxy dst -j REDIRECT ...
+# No UDP rule for GitHub CIDRs — UDP to GitHub is dropped by default OUTPUT DROP
 ```
 
-Or, more precisely, restrict the ipset rule to TCP only:
+For non-GitHub domains requiring ssl-bump: add explicit UDP drop rules per-IP
+before the ipset ACCEPT rule.
+
+### D3. Fix Iptables Flush Race Condition
+
+The current `init-firewall.sh` flushes all rules (line 95) before applying new
+ones. Between flush and completion, the container has unrestricted access.
+
+**Fix**: Set `DROP` policy *before* flushing, or use `iptables-restore` for
+atomic rule replacement. The preferred approach:
+```bash
+# Set restrictive policy FIRST (before any flush)
+iptables -P OUTPUT DROP
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+# Now safe to flush — default is already DROP
+iptables -F
+iptables -X
+# ... apply new rules ...
+```
+
+### D4. Add `gist.github.com` to Repo-Serving Domain Guard
+
+`gist.github.com` serves user-controlled content (arbitrary code snippets).
+Claude rarely needs gist access for normal work. Add it to the ssl-bump
+domain list with path filtering, alongside `github.com`, `api.github.com`,
+`raw.githubusercontent.com`, and `codeload.github.com`.
+
+### D5. Squid CA Trust: System Trust Store First, Per-Rule CA Deferred
+
+Initial implementation installs the Squid CA into the system trust store, git
+config (`http.sslCAInfo`), and per-tool env vars. This is the simplest approach
+that works.
+
+**Deferred improvement** (low priority): path-filter-specific Squid CA — only
+connections that actually undergo ssl-bump MITM would need to trust the Squid
+CA. Connections that are spliced never see the Squid CA regardless.
+
+### D6. Compose Migration as Early Task
+
+The current `devcontainer.json` uses `build.dockerfile` (no compose). The Squid
+sidecar requires compose. This is a **significant migration** and should be an
+early task in the work stream:
+
+- `devcontainer.json` switches from `"build"` to `"dockerComposeFile"` +
+  `"service"` syntax
+- `runArgs` (`--cap-add=NET_ADMIN`, `--cap-add=NET_RAW`, `--env-file`) move
+  to compose `services.devcontainer` config
+- All `mounts` translate to compose `volumes`
+- Use `vhiribarren/echo-server` as a placeholder for the Squid proxy container
+  during initial compose migration (swap for real Squid later)
+
+### D7. Single Allowlist, No Splitting
+
+`deploy-security.sh` must NOT split the allowlist into separate files. Every
+component (`init-firewall.sh`, Squid config generator, `NO_PROXY` builder)
+reads the same allowlist and acts only on entries relevant to its function:
+
+- `init-firewall.sh`: processes Type 1 (host) and Type 2 (host:port) entries
+  for iptables rules; for GitHub entries, redirects traffic to Squid instead
+  of allowing direct
+- Squid config generator: processes Type 3 (path) entries for ssl-bump ACLs;
+  processes GitHub entries for splice/bump classification
+- `NO_PROXY` builder: includes Type 1 and Type 2 entries, excludes Type 3
+  and all GitHub/githubusercontent domains
+
+### D8. `deploy-security.sh` Security Model
+
+The `deploy-security.sh` script requires a sudoers entry. It must be:
+- **Idempotent**: safe to run multiple times with the same result
+- **No writable dependencies**: must not depend on any file that the
+  `remoteUser` (node) account can write to — use the "deploy copy" model
+  (root-owned copies of config) and/or hash verification
+- The hash guard in `init-firewall.sh` computes against the *original*
+  allowlist (before any processing)
+
+---
+
+## Findings Requiring Implementation
+
+### F1. GitHub CIDR Overlap Makes IP-Level Service Separation Impossible
+
+Live data from `api.github.com/meta` confirms all GitHub services share the
+same broad CIDR blocks:
+
+| Shared IPv4 CIDRs | Services |
+|---|---|
+| `192.30.252.0/22` | web, api, git, copilot, packages |
+| `185.199.108.0/22` | web, api, git, copilot |
+| `140.82.112.0/20` | web, api, git, copilot, packages |
+| `143.55.64.0/20` | web, api, git, copilot |
+
+The existing `init-firewall.sh` already demonstrates this: lines 267-268 use
+a single `github_triggered` flag, and line 306 dumps `web + api + git + copilot`
+CIDRs into one ipset. You cannot allow `copilot.github.com` at the IP level
+without also allowing `github.com`.
+
+**Resolution**: Decision D1 — all GitHub traffic through Squid.
+
+### F2. `init-firewall.sh` ipset Allows UDP (QUIC Bypass Risk)
+
+Line 335:
+```bash
+iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+```
+This matches ALL protocols (TCP + UDP) to allowed IPs. If any service enables
+HTTP/3 (QUIC on UDP/443), clients could bypass Squid entirely.
+
+**Current status**: GitHub does not advertise HTTP/3 (`Alt-Svc: h3`) as of
+2026-03-18, but this is a latent vulnerability.
+
+**Resolution**: Decision D2. For the immediate fix, restrict the ipset rule
+to TCP:
 ```bash
 iptables -A OUTPUT -p tcp -m set --match-set allowed-domains dst -j ACCEPT
 ```
 
-The second approach is stricter but may break services that use UDP for
-non-QUIC purposes on non-standard ports to allowed IPs.
+### F3. Iptables Flush-Then-Apply Race Condition
 
----
+Lines 94-101 flush all rules before applying new ones. If the script exits
+between flush and completion, the container has unrestricted network access.
 
-## Compatibility Issues with Existing `init-firewall.sh`
+**Resolution**: Decision D3.
 
-### 1. The `github_triggered` Flag Already Combines All GitHub Services
+### F4. `gist.github.com` Missing from Domain Guard
 
-`init-firewall.sh:267-268`:
+Serves attacker-controlled content (arbitrary code snippets). A prompt
+injection could direct Claude to fetch a gist containing malicious instructions.
+
+**Resolution**: Decision D4.
+
+### F5. `NO_PROXY` Parsing Bug
+
+The grep pattern `'^[^/]+/[^/]'` intended to exclude Type 3 (path) entries
+would also exclude CIDR entries like `host.example.com/24` if allowlist formats
+are merged. The existing `init-firewall.sh` supports CIDRs (lines 273-277).
+
+**Fix**: Use a more precise pattern that distinguishes path entries (containing
+at least two path segments) from CIDR notation (single `/` followed by digits
+only):
 ```bash
-if [[ "$entry" =~ (github|githubusercontent)\.com$ ]]; then
-    github_triggered=true
+# Exclude Type 3 path entries but keep CIDR notation
+grep -vE '^[^/]+/[^0-9]|^[^/]+/[0-9]+/'
 ```
+Or better: classify entries explicitly by type during allowlist parsing rather
+than using regex heuristics after the fact.
 
-This treats ALL `*github*` and `*githubusercontent*` domains identically —
-any one triggers the CIDR fetch for `web + api + git + copilot`. The DS-001
-design assumes these can be treated differently (repo-serving vs. direct),
-but the existing script already collapses them.
+### F6. Squid `ssl_bump` Step Ordering
 
-**Impact**: The guard logic proposed in DS-001 (rejecting bare `github.com`
-entries) conflicts with the existing firewall's approach of treating all GitHub
-domains as a single group. If `copilot.github.com` is in the allowlist, the
-existing script will set `github_triggered=true` and add all GitHub CIDRs —
-including those for `github.com` — to the allowed set.
+The v0.5 Squid config sketch uses `peek → stare → bump`. In forward proxy mode
+with CONNECT, Squid already knows the hostname from the CONNECT request —
+`stare` (completing the TLS handshake to see the server cert) is unnecessary
+for hostname-based decisions and adds an extra round-trip.
 
-### 2. No Compose Infrastructure Exists
-
-The current `devcontainer.json` uses `build.dockerfile` (standalone container,
-no compose). DS-001 requires compose for the Squid sidecar. This is a
-**significant migration**:
-
-- `devcontainer.json` must switch from `"build"` to
-  `"dockerComposeFile"` + `"service"` syntax
-- `runArgs` (`--cap-add=NET_ADMIN`, `--cap-add=NET_RAW`, `--env-file`)
-  must move to compose `services.devcontainer` config
-- All `mounts` must be translated to compose `volumes`
-- `postStartCommand` invocation of `init-firewall.sh` needs to account for
-  the Squid sidecar being ready
-
-### 3. SSH Mount is Read-Only
-
-`devcontainer.json:78`:
-```
-"source=${localEnv:USERPROFILE}/dotclaude/ssh,target=/home/node/.ssh,type=bind,readonly=true"
-```
-
-DS-001's SSH wrapper needs to replace `/usr/bin/ssh` and set
-`ProxyCommand=nc --proxy squid:3128`. The SSH config mount is read-only, so
-the wrapper can't modify `~/.ssh/config`. This is fine — the wrapper uses
-command-line args — but it means SSH `ProxyCommand` can't be set via config
-file as a fallback.
-
-### 4. `remoteUser` is `node`, Not Root
-
-The devcontainer runs as user `node` (line 52). DS-001's root-locked
-deployment pattern requires careful Dockerfile staging. The existing
-sudoers entries (Dockerfile:160-162) only allow:
-- `init-firewall.sh`
-- `chown -R node:node /workspace`
-
-DS-001 needs additional sudoers entries for `deploy-security.sh` and
-potentially for the SSH wrapper deployment.
-
-### 5. `postStartCommand` vs `postCreateCommand` Timing
-
-The existing `postStartCommand` (devcontainer.json:96) runs
-`init-firewall.sh`. DS-001 adds `deploy-security.sh` as `postCreateCommand`
-(§WS-3). The timing matters:
-
-- `postCreateCommand`: runs once after container creation
-- `postStartCommand`: runs every time the container starts
-
-The firewall must be applied on every start (it uses iptables which are
-ephemeral). But `deploy-security.sh` generates the Squid ACL and NO_PROXY
-— these only need to run once. **The design needs to clarify which parts run
-at which lifecycle stage**, and ensure the iptables script runs *after*
-`deploy-security.sh` has generated the guard list and NO_PROXY.
-
-### 6. Hash Guard Interaction
-
-`init-firewall.sh:49-87` implements an allowlist-hash guard that prevents
-re-running the script with a modified allowlist. DS-001's `deploy-security.sh`
-modifies how the allowlist is interpreted (splitting Type 1/2/3 entries).
-If `deploy-security.sh` pre-processes the allowlist into separate files before
-`init-firewall.sh` runs, the hash guard will see different content and block
-the re-run. The integration must ensure:
-- Either the hash is computed on the *original* allowlist (before splitting)
-- Or the hash guard is updated to understand the new flow
-
----
-
-## Additional Design Issues
-
-### 7. `gist.github.com` Is Missing from Repo-Serving Domain Guard
-
-The guard list (§8) blocks:
-- `github.com`
-- `raw.githubusercontent.com`
-- `codeload.github.com`
-- `api.github.com`
-
-But `gist.github.com` also serves user-controlled content (arbitrary code
-snippets) and resolves to the same GitHub anycast IPs. A prompt injection
-could direct Claude to fetch a gist containing malicious instructions or
-a binary payload. `gist.github.com` should be either:
-- Added to the repo-serving domain guard (blocked for direct access)
-- Routed through Squid with path filtering (gist URLs contain user/gist-id)
-
-### 8. `objects.githubusercontent.com` Residual Risk Is Larger Than Stated
-
-The doc acknowledges this as a residual risk but understates the attack surface.
-`objects.githubusercontent.com` serves:
-- Release assets (binaries, tarballs)
-- LFS objects
-- **User-uploaded images in issues/PRs/READMEs**
-- Avatars and other CDN content
-
-A prompt injection doesn't need the attacker to stage a binary in a repo
-Claude can clone — the attacker can upload a binary as a release asset on
-*any* public repo they control, then include a link in an issue comment on
-a repo Claude *is* working with. The "human gate on allowlist" mitigation
-doesn't help here because the allowlist only controls which repos Claude
-can clone, not which URLs Claude can `curl`.
-
-### 9. Squid CA Cert Trust Scope
-
-DS-001 says the CA cert is "installed into system trust store, git, and
-per-tool env vars." This means ALL TLS connections from the devcontainer
-(not just GitHub ones) will trust the Squid CA. If a bug in Squid or a
-misconfiguration causes ssl-bump to activate for non-GitHub domains
-(despite the `splice` rule), the devcontainer would silently accept
-intercepted TLS for *any* domain.
-
-**Recommendation**: Install the CA cert ONLY in the git-specific config
-(`http.sslCAInfo`) and in environment variables scoped to GitHub operations.
-Do not add it to the system trust store.
-
-### 10. `NO_PROXY` Construction Has a Parsing Bug Risk
-
-The `NO_PROXY` construction (§8) uses this grep:
-```bash
-grep -vE '^[^/]+/[^/]'
-```
-
-This is meant to exclude Type 3 (path) entries. But entries like
-`registry.npmjs.org` (no slash) pass through correctly, while
-`github.com/org/repo` is excluded. The issue: an entry like
-`host.example.com/24` (a CIDR notation) would also be excluded, even though
-it's a Type 1 network entry, not a Type 3 path entry. The existing allowlist
-format doesn't use CIDR notation in this way, but the existing
-`init-firewall.sh` does support CIDRs (line 273-277). If the allowlist
-formats are merged, this ambiguity becomes a real bug.
-
-### 11. Squid `ssl_bump` Step Ordering
-
-The Squid config sketch (§8) uses:
+**Fix**: Use `peek + bump` for known domains, skip `stare`:
 ```squid
-ssl_bump peek step1 all
-ssl_bump stare step2 github_domains
-ssl_bump splice step2 all
-ssl_bump bump step3 github_domains
+ssl_bump peek all
+ssl_bump bump github_repo_domains
+ssl_bump splice all
 ```
 
-The `stare` step is required to see the server certificate before deciding
-to bump, but this ordering means Squid must complete the TLS handshake to
-GitHub's server before it can bump. In forward proxy mode with `CONNECT`,
-Squid sees the hostname from the CONNECT request — it doesn't need `stare`
-for hostname-based decisions. The `peek` + `bump` for known domains (skip
-`stare`) would be more efficient and avoid the extra round-trip.
+### F7. `objects.githubusercontent.com` Residual Risk
 
-### 12. Container Start Failure Mode
+The attack surface is larger than stated in v0.5. `objects.githubusercontent.com`
+serves release assets, LFS objects, and user-uploaded images in issues/PRs.
+An attacker can upload a binary as a release asset on *any* public repo they
+control, then include a link in an issue comment on a repo Claude *is* working
+with. The allowlist "human gate" doesn't help because it controls repo cloning,
+not arbitrary URL fetches.
 
-The design says "container start fails visibly" if the guard fires (§7).
-But the guard runs in `postStartCommand` (after the container is already
-running). A failure here doesn't prevent the container from existing — it
-just means the terminal command fails. The container is still running with
-*no firewall rules applied* (since iptables were flushed at line 95-100
-before the guard check). This is a **security-critical race**: if the guard
-fails after iptables flush but before rules are applied, the container has
-unrestricted network access.
+**Suggested mitigation**: Route `objects.githubusercontent.com` through Squid
+with ssl-bump and apply content-type / file-extension filtering. Block
+executable content types (`application/octet-stream`, `application/x-executable`,
+`application/zip`, etc.) while allowing images and text. Alternatively, add
+`objects.githubusercontent.com` to the ssl-bump domain list with an explicit
+allowlist of URL path patterns (e.g., only allow paths matching known-safe
+patterns like avatar URLs). This is a defense-in-depth measure — the primary
+mitigation remains Claude's instruction-following behavior.
 
-**The existing `init-firewall.sh` has the same issue** — it flushes all
-rules at line 95, then applies new ones. If it exits at any point between
-flush and completion, the container is wide open.
+### F8. Container Lifecycle Timing
+
+The design must ensure the environment "just works" with no debugging required.
+Clear lifecycle:
+
+```
+postCreateCommand (runs once after container creation):
+  1. deploy-security.sh:
+     - Reads allowlist, generates Squid ACL config
+     - Generates NO_PROXY value
+     - Deploys SSH wrapper
+     - All outputs are root-owned (deploy copy model)
+     - Idempotent — safe to re-run
+
+postStartCommand (runs every container start):
+  1. Wait for Squid sidecar health check (compose `depends_on` +
+     `healthcheck`)
+  2. init-firewall.sh:
+     - Sets DROP policy first (D3)
+     - Flushes and applies iptables rules
+     - Redirects GitHub CIDRs to Squid
+     - Applies ipset for direct-allowed domains
+     - Hash-validates allowlist hasn't changed
+  3. Verify connectivity (existing example.com check)
+```
+
+The hash guard in `init-firewall.sh` must compute against the original
+allowlist file, not any generated artifacts. Since `deploy-security.sh` does
+not modify the allowlist (D7), this is satisfied by the current design.
+
+**Compose `depends_on` with healthcheck** ensures Squid is ready before the
+firewall script redirects traffic to it. No race condition.
+
+### F9. `init-firewall.sh` `github_triggered` Flag Rework
+
+The current flag (line 267) treats all `*github*` and `*githubusercontent*`
+domains identically. With Decision D1, this needs rework:
+
+- When any GitHub/githubusercontent domain appears, fetch CIDRs as before
+- But instead of adding them to `allowed-domains` ipset (which allows direct
+  access), add them to a separate `github-proxy` ipset
+- Add an iptables rule to redirect `github-proxy` traffic to the Squid proxy
+  (REDIRECT or DNAT to squid:3128)
+- The allowlist parser must recognize GitHub entries and route them to the
+  proxy path, not the direct path
 
 ---
 
-## Summary of Findings by Severity
+## Early High-Risk Question
 
-### Must-Fix (design is broken without these)
+### Copilot Proxy Compatibility (Must Resolve Before Further Work)
 
-1. **CIDR overlap makes IP-level service separation impossible** — the entire
-   dual-layer split between "direct GitHub services" and "proxied GitHub
-   services" doesn't work at the iptables level. All GitHub traffic must go
-   through Squid.
+VS Code's Copilot extension must respect `HTTPS_PROXY` for **all** its
+endpoints — completions, telemetry, auth, and the completions proxy. If any
+Copilot endpoint bypasses the proxy, the architecture breaks.
 
-2. **`init-firewall.sh` `allowed-domains` ipset allows UDP** — permits
-   potential QUIC bypass of Squid proxy for all allowed IPs.
+**What to verify**:
+1. Does VS Code Copilot honor `HTTPS_PROXY` / `http.proxy` for all endpoints?
+2. Does `api.githubcopilot.com` traffic go through the configured proxy?
+3. Does `copilot-proxy.githubusercontent.com` traffic go through the proxy?
+4. Are there any hardcoded direct connections in the Copilot extension?
 
-3. **Iptables flush-then-apply race** — container is briefly unprotected
-   during firewall initialization.
+**How to measure latency impact**: With the proxy in splice mode (no
+inspection), measure completion latency with and without proxy. The added
+latency should be minimal (one internal TCP hop), but autocomplete is the
+most latency-sensitive operation. If measured latency is unacceptable, we
+reassess — but measure first, decide from data.
 
-### Should-Fix (security gaps)
-
-4. **`gist.github.com` missing from domain guard** — serves
-   attacker-controlled content.
-
-5. **Squid CA in system trust store** — over-broad trust; should be
-   git-specific only.
-
-6. **`objects.githubusercontent.com` risk understated** — attack doesn't
-   require staging in an allowlisted repo.
-
-### Design Clarifications Needed
-
-7. **Compose migration** — significant effort, not addressed in workstreams.
-
-8. **Lifecycle timing** — `postCreateCommand` vs `postStartCommand`
-   interaction with hash guard and deploy-security.sh.
-
-9. **`NO_PROXY` parsing** — CIDR/path ambiguity.
-
-10. **Copilot proxy compatibility** — must verify VS Code Copilot extension
-    respects `HTTPS_PROXY` for all its endpoints (completions proxy, telemetry,
-    auth).
+**This must be resolved before investing in further implementation work.**
 
 ---
 
-## Questions
+## Work Stream Decomposition
 
-1. **Given the CIDR overlap finding, are you willing to route all GitHub traffic
-   through Squid (with splice for non-repo-serving domains)?** This is a
-   significant architecture change from the dual-layer model in v0.5.
+Suggested ordering based on dependency and risk:
 
-2. **What is the Copilot latency tolerance?** Spliced connections through Squid
-   add minimal latency (one extra TCP hop on the internal network), but Copilot
-   completions are latency-sensitive. Is this acceptable, or is there a
-   hard requirement for zero-proxy Copilot?
+### Phase 0 — Risk Reduction
+1. **Verify Copilot proxy compatibility** — manual testing with `HTTPS_PROXY`
+   pointed at a test Squid instance. If this fails, the architecture needs
+   revision.
+2. **Compose migration** — convert `devcontainer.json` from Dockerfile-only to
+   compose. Use `vhiribarren/echo-server` as Squid placeholder. Validate all
+   mounts, capabilities, and lifecycle commands work in compose mode.
 
-3. **Should `gist.github.com` be in the repo-serving domain guard?** Gists are
-   user-controlled content. The question is whether Claude needs gist access
-   for legitimate work.
+### Phase 1 — Firewall Hardening (no Squid dependency)
+3. **Fix iptables flush race** (D3) — set DROP before flush
+4. **Restrict ipset to TCP** (D2/F2) — prevent UDP/QUIC bypass
+5. **Fix `NO_PROXY` parsing** (F5)
 
-4. **The existing `init-firewall.sh` has the iptables flush race condition
-   too — is this a known accepted risk, or should DS-001 also address it?**
-   A fix would be to set `DROP` policy *before* flushing rules, or to use
-   `iptables-restore` atomically.
+### Phase 2 — Squid Integration
+6. **Replace echo-server with Squid** container in compose
+7. **Implement allowlist-driven Squid config generation** in `deploy-security.sh`
+   — read allowlist, classify entries, generate `squid.conf` with splice/bump
+   rules
+8. **Rework `init-firewall.sh` GitHub handling** (F9) — redirect GitHub CIDRs
+   to Squid instead of direct-allowing
+9. **Deploy SSH wrapper** with `ProxyCommand` for git-over-SSH through Squid
 
-5. **Is there an existing compose file somewhere, or is the compose migration
-   greenfield?** The current `devcontainer.json` is pure Dockerfile-based
-   with no compose references.
+### Phase 3 — Path Filtering
+10. **Implement ssl-bump for repo-serving domains** — CA generation, cert
+    deployment to system trust store and git config
+11. **Implement URL path ACLs** in Squid for Type 3 allowlist entries
+12. **Add `gist.github.com`** to ssl-bump domain list (D4)
+
+### Phase 4 — Hardening
+13. **`objects.githubusercontent.com` content filtering** (F7)
+14. **Latency measurement** for Copilot through splice proxy
+15. **Per-rule Squid CA** (D5 deferred improvement)
+
+---
+
+## Appendix: GitHub CIDR Research
+
+Data retrieved 2026-03-18 from `api.github.com/meta`:
+
+| Service | Dedicated IPs? | Separable from github.com via IP? |
+|---|---|---|
+| api.github.com | Has unique /32s, shares broad CIDRs | No |
+| copilot.github.com | Has 11 unique /32s, shares broad CIDRs | No |
+| ghcr.io | Has unique /32s, all within shared CIDRs | No |
+| gist.github.com | No dedicated IPs at all | No |
+| git (SSH/HTTPS) | Shares exact same IPs as web | No |
+
+GitHub does not currently serve HTTP/3 on any service (no `Alt-Svc: h3`
+headers as of 2026-03-18). All services respond HTTP/2. UDP/443 blocking is
+a preventive measure.

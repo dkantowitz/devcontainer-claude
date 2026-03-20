@@ -232,3 +232,8 @@ not the Claude permission system.
 
 See (poorly maintained) [notes.md](notes.md) for the full design rationale, file-by-file mount table,
 session conflict analysis, and troubleshooting notes.
+
+See [docs/nested-podman.md](docs/nested-podman.md) for a complete reference on enabling
+nested rootless Podman inside the devcontainer — packages, file capabilities, crun
+upgrade, user config, seccomp profile, and a table of approaches that were tried and
+failed.

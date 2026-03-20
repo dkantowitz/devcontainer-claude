@@ -209,6 +209,7 @@ fi
 # Entries are deduplicated. Either or both may be absent (non-fatal).
 # (HOST_ALLOWLIST and PROJECT_ALLOWLIST are set at the top of this script.)
 github_triggered=false
+google_triggered=false
 
 # Build a deduplicated combined entry list from both allowlists.
 # Uses an associative array as a set to discard duplicates.
@@ -269,6 +270,13 @@ for entry in "${combined_entries[@]}"; do
         continue
     fi
 
+    # Google domains encountered flags us to do the full Google
+    # CIDR block lookup from goog.json.
+    if [[ "$entry" =~ (google|googleapis|gstatic|googleusercontent|gmail)\.com$ ]]; then
+        google_triggered=true
+        continue
+    fi
+
     # directly handle explicit ipv4 addresses
     if [[ "$entry" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?$ ]]; then
         echo "Adding $entry from allowlist"
@@ -304,6 +312,30 @@ if [ "$github_triggered" = true ]; then
             echo "Adding GitHub range $cidr"
             ipset add --exist allowed-domains "$cidr"
         done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .copilot)[]' | aggregate -q)
+    fi
+fi
+
+# Google domains use CIDR block fetching rather than DNS — Google's services
+# span a large IP space and a single DNS lookup only returns a small subset.
+# goog.json covers all Google-owned ranges (accounts, APIs, Gmail, etc.).
+if [ "$google_triggered" = true ]; then
+    echo "Google domain detected — fetching CIDR ranges from gstatic.com/ipranges/goog.json..."
+    # Ensure www.gstatic.com is resolvable before the fetch
+    resolve_and_add "www.gstatic.com" || echo "WARNING: Failed to resolve www.gstatic.com"
+    google_ranges=$(curl -s https://www.gstatic.com/ipranges/goog.json || true)
+    if [ -z "$google_ranges" ]; then
+        echo "WARNING: Failed to fetch Google IP ranges (skipping Google)"
+    elif ! echo "$google_ranges" | jq -e '.prefixes' >/dev/null 2>&1; then
+        echo "WARNING: Google IP ranges response missing .prefixes field (skipping Google)"
+    else
+        while read -r cidr; do
+            if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+                echo "WARNING: Invalid CIDR from Google goog.json: $cidr (skipping)"
+                continue
+            fi
+            echo "Adding Google range $cidr"
+            ipset add --exist allowed-domains "$cidr"
+        done < <(echo "$google_ranges" | jq -r '.prefixes[].ipv4Prefix // empty')
     fi
 fi
 

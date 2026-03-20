@@ -12,7 +12,9 @@
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
-    "--env-file=.devcontainer/.env"
+    "--device=/dev/net/tun",
+    "--env-file=.devcontainer/.env",
+    "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
   ],
   "customizations": {
     "vscode": {
@@ -28,7 +30,9 @@
         "ms-vscode.cpp-devtools",
         "ms-vscode.cpptools-extension-pack",
         "ms-vscode.cpptools-themes",
-        "ms-vscode.cpptools"
+        "ms-vscode.cpptools",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
       ],
       "settings": {
         "editor.formatOnSave": true,

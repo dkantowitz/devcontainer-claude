@@ -19,20 +19,18 @@ marketplace.visualstudio.com
 vscode.blob.core.windows.net
 update.code.visualstudio.com
 
-# Helix Team Hub (git hosting)
-helixteamhub.cloud
-
 # GitHub
 # Any github.com or githubusercontent.com entry triggers a one-time fetch of
 # all GitHub CIDR ranges from api.github.com/meta (using aggregate to combine
 # them). This covers the full anycast fleet — plain DNS is not sufficient.
 # Uncomment any one line to enable; listing multiple is harmless.
 
-#github.com
-#api.github.com
-#raw.githubusercontent.com
+# Repo-serving domains — use path entries (DS-001 §8 guard will reject bare hosts)
+github.com/dkantowitz/devcontainer-claude
+github.com/dkantowitz/*
+#raw.githubusercontent.com/dkantowitz/*
+#codeload.github.com/dkantowitz/*
 #objects.githubusercontent.com
-#codeload.github.com
 
 # Telegram Bot API
 api.telegram.org
@@ -41,15 +39,32 @@ api.telegram.org
 # github.com / githubusercontent.com entries trigger CIDR fetch (not DNS).
 # api.githubcopilot.com is a separate domain — resolved via DNS.
 
-api.github.com                          # — auth/token (CIDR)
+# DS-001: api.github.com and github.com are CIDR-family splice passthrough
+# (OAuth flow, token exchange). NOT guarded — they serve non-repo purposes.
+api.github.com                          # — auth/token, OAuth (CIDR; splice)
 api.githubcopilot.com                   # — completions API (DNS)
-copilot-proxy.githubusercontent.com     # — completions proxy (CIDR)
-copilot-telemetry.githubusercontent.com # — telemetry (CIDR)
+copilot-proxy.githubusercontent.com     # — completions proxy (CIDR; splice)
+copilot-telemetry.githubusercontent.com # — telemetry (CIDR; splice)
 default.exp-tas.com                     # — feature flags (DNS)
-github.com                              # — OAuth flow (CIDR)
+github.com                              # — OAuth flow (CIDR; splice)
 
 # VS Code telemetry (optional — Copilot works without this)
 dc.services.visualstudio.com
 
 # host computer for chrome debugging port (used with chrome dev MCP)
 host.docker.internal:9222
+
+# Docker Hub (base image pulls)
+# Used for nested podman inside devcontainer.
+# Podman is used to let claude autonomously build containers for the deployment artifact.
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
+r2.cloudflarestorage.com
+
+# debian package repositories (for apt-get inside the container)
+deb.debian.org
+security.debian.org
+
+# Google CIDR trigger (for init-firewall.sh Google IP range fetch)
+www.gstatic.com

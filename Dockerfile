@@ -77,6 +77,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+## ── Container Building (rootless Podman — no host Docker dependency) ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      podman fuse-overlayfs slirp4netns uidmap libcap2-bin \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Use file capabilities instead of setuid for newuidmap/newgidmap.
+# This grants CAP_SETUID/CAP_SETGID without changing the caller's UID,
+# so Podman's ownership check passes (caller uid == target uid).
+RUN chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap && \
+    setcap cap_setuid+ep /usr/bin/newuidmap && \
+    setcap cap_setgid+ep /usr/bin/newgidmap
+
+# Install crun 1.26 (Debian ships 1.8 which fails on read-only /proc/sys
+# in nested containers). 1.9+ gracefully ignores EROFS on sysctl writes.
+ARG CRUN_VERSION=1.26
+RUN curl -fsSL "https://github.com/containers/crun/releases/download/${CRUN_VERSION}/crun-${CRUN_VERSION}-linux-amd64" \
+      -o /usr/local/bin/crun \
+    && chmod +x /usr/local/bin/crun
+
+## ── hadolint (Dockerfile linter) ─────────────────────────────────
+RUN curl -fsSL "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64" \
+      -o /usr/local/bin/hadolint \
+    && chmod +x /usr/local/bin/hadolint
+
 # End of apt-get installs. Remove policy-rc.d to allow services to start if needed.
 RUN rm /usr/sbin/policy-rc.d
 
@@ -96,6 +120,14 @@ RUN ARCH=$(dpkg --print-architecture) && \
     dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
     rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
+## ── just command runner (latest stable from GitHub) ──────────────
+RUN JUST_VERSION=$(curl -sL https://api.github.com/repos/casey/just/releases/latest | jq -r .tag_name) \
+    && curl -sL "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+       | tar xz -C /usr/local/bin just \
+    && chmod +x /usr/local/bin/just
+
+## ── Rootless Podman user namespaces ──────────────────────────────
+RUN usermod --add-subuids 100000-165535 --add-subgids 100000-165535 node
 
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \
@@ -120,6 +152,17 @@ WORKDIR /workspace
 
 # Set up non-root user
 USER node
+
+# Rootless Podman config
+# - vfs storage driver (no fuse needed in unprivileged container)
+# - crun 1.26 from /usr/local/bin (Debian's 1.8 fails on nested /proc/sys)
+# - chroot isolation for builds (avoids CAP_SYS_ADMIN for nested namespaces)
+# - empty default_sysctls (can't write /proc/sys in nested containers)
+RUN mkdir -p /home/node/.config/containers && \
+    printf '[storage]\ndriver = "vfs"\n' > /home/node/.config/containers/storage.conf && \
+    printf '[engine]\nruntime = "/usr/local/bin/crun"\n\n[engine.runtimes]\ncrun = ["/usr/local/bin/crun"]\n' > /home/node/.config/containers/containers.conf && \
+    printf '\n[containers]\ndefault_sysctls = []\n' >> /home/node/.config/containers/containers.conf
+ENV BUILDAH_ISOLATION=chroot
 
 # Install global packages
 ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global
@@ -160,4 +203,5 @@ USER root
 RUN echo "node ALL=(root) NOPASSWD: /bin/chown -R node\\:node /workspace" > /etc/sudoers.d/workspace && \
     echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/firewall && \
     chmod 0440 /etc/sudoers.d/firewall /etc/sudoers.d/workspace
+
 USER node

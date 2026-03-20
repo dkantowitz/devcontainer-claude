@@ -158,10 +158,11 @@ USER node
 # - crun 1.26 from /usr/local/bin (Debian's 1.8 fails on nested /proc/sys)
 # - chroot isolation for builds (avoids CAP_SYS_ADMIN for nested namespaces)
 # - empty default_sysctls (can't write /proc/sys in nested containers)
+# - utsns="host" (nested containers can't call sethostname without CAP_SYS_ADMIN)
 RUN mkdir -p /home/node/.config/containers && \
     printf '[storage]\ndriver = "vfs"\n' > /home/node/.config/containers/storage.conf && \
     printf '[engine]\nruntime = "/usr/local/bin/crun"\n\n[engine.runtimes]\ncrun = ["/usr/local/bin/crun"]\n' > /home/node/.config/containers/containers.conf && \
-    printf '\n[containers]\ndefault_sysctls = []\n' >> /home/node/.config/containers/containers.conf
+    printf '\n[containers]\ndefault_sysctls = []\nutsns = "host"\n' >> /home/node/.config/containers/containers.conf
 ENV BUILDAH_ISOLATION=chroot
 
 # Install global packages

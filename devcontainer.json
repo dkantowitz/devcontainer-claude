@@ -1,5 +1,5 @@
 {
-  "name": "Claude Code Sandbox",
+  "name": "claude sandbox: ${localWorkspaceFolder}",
   "build": {
     "dockerfile": "Dockerfile",
     "args": {
@@ -14,7 +14,8 @@
     "--cap-add=NET_RAW",
     "--device=/dev/net/tun",
     "--env-file=.devcontainer/.env",
-    "--security-opt", "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
+    "--security-opt",
+    "seccomp=${localWorkspaceFolder}/.devcontainer/seccomp.json"
   ],
   "customizations": {
     "vscode": {

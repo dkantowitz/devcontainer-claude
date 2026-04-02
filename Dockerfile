@@ -176,15 +176,15 @@ ENV SHELL=/bin/zsh
 ENV EDITOR=nano
 ENV VISUAL=nano
 
-# Default powerline10k theme
+# Zsh with robbyrussell theme (minimal, no p10k)
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
+  -t robbyrussell \
   -p git \
   -p fzf \
   -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
   -a "source /usr/share/doc/fzf/examples/completion.zsh" \
-  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
-  -x
+  -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history"
 
 # Install Claude, then install wrapper to /usr/local/bin/claude (ahead of npm
 # global bin in PATH) so that npm install -g cannot overwrite it.

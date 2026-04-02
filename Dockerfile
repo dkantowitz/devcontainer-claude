@@ -179,7 +179,7 @@ ENV VISUAL=nano
 # Zsh with robbyrussell theme (minimal, no p10k)
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
-  -t robbyrussell \
+  -x -t robbyrussell \
   -p git \
   -p fzf \
   -a "source /usr/share/doc/fzf/examples/key-bindings.zsh" \
